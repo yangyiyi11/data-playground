@@ -1,0 +1,153 @@
+---
+title: "HR analytics"
+output: word_document
+---
+# Yiyi Yang
+
+Data used in this assignment: HR_comma_sep.csv (Please correct the file path when fisrt run this code.)
+
+Main focus: exploring why people left this company using the data
+
+R package used: ggplot2, ggthemes, reshape, glmnet, ModelGood
+
+## 1. Importing data
+
+```{r setup, include=FALSE}
+s1 <- read.csv ("../data/HR_comma_sep.csv",header=TRUE) # import data
+# categorical variable: sales, salary
+```
+
+## 2. A quick glance of the relationships between different continuous variables
+
+The correlation matrix can give us a roughly idea what the relationship is between continuous variables.  
+
+Since we are interested in why people left the company, we will focus on the correlation between "left" and other variables. Also, we can easily check from the matrix if there are any two or more other variables that are highly correlated, which will be helpful to our model developing later.
+
+From the plot below, several interesting points can be observed:
+
+1. The correlation between "satisfaction_level" and "left" is a negtive number, and its absolute value is relatively high (-0.37). It indicates that the people with low satisfaction level tend to leave the company. Also, the low satisfaction level might be one of the key reasons (highly corrlated) for people to leave. We will explore this in more details later in this assignment.
+
+2. The "time_spent_company" seems to be another important indicator of if people would leave the company. The two variables have a relative high positive correlation (0.27), indicating that the longer an enployee has stayed in the company, the more chance that he/she would leave the company. However, we might get an opposite conclusion, if we visually see the distribution of the data. I will discuss it more in details in section 3.
+
+3. "Average_monthly_hour", "Number_project", and "last evaluation" have relatively high positive correlation. It indicates that an employee spending more time in the company would finish more projects, resulting in a better evaluation of his/her performance.
+
+```{r correlation, echo=FALSE}
+
+s2<-s1[,c(1:8)]
+
+cor.matrix <- round(cor(s2, use = "pairwise.complete.obs", method = "spearman"), digits = 2)
+
+## Turning it all into a dataframe
+
+library(reshape)
+
+cor.dat <- melt(cor.matrix)
+cor.dat <- data.frame(cor.dat)
+
+## Plotting
+
+library(ggplot2)
+library(ggthemes)
+
+theme_set(theme_solarized())
+
+ggplot(cor.dat, aes(X2, X1, fill = value)) + 
+  geom_tile() + 
+  geom_text(aes(X2, X1, label = value), color = "#073642", size = 4) +
+  scale_fill_gradient(name=expression("Spearman" * ~ rho), low = "#fdf6e3", high = "steelblue", 
+  breaks=seq(0, 1, by = 0.2), limits = c(-0.4, 0.4)) +
+  scale_x_discrete(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  labs(x = "", y = "") + 
+  guides(fill = guide_colorbar(barwidth = 7, barheight = 1, title.position = "top",
+    title.hjust = 0.5)) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), 
+      panel.grid.major = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank(),
+      axis.ticks = element_blank(),
+      legend.justification = c(1, 0),
+      legend.position = c(-2, 0),
+      legend.direction = "horizontal") +
+  guides(fill = guide_colorbar(barwidth = 7, barheight = 1, title.position = "top", 
+    title.hjust = 0.5))
+```
+
+## 3. Histogram plots - visual observation
+
+Since we know that "satisfaction_level", "time_spend_company" and "left" has strong relations from the last plot, two histogram plots are plotted to again visually observe the relationship between the three varibles.
+
+Two conclusions can be drawn from the following two plots:
+
+1. The employees with high satisfaction level tend to stay with the firm, while the  employees with the lowest satisfaction level are very likely to leave the firm.
+
+2. Most of the people left the company have worked in the company for 3-6 years, while almost all the people working for the company for more than 7 years stays with the company. This conclusion seems to be contradict to the conclusion we have drawn from the correlation matrix. 
+
+However, if looking closely into the second histogram plot, we can find the reason. More than 90% of the observations is within the "time_spend_company" range of 1-6 years. In this case, we do not really have enough information in the range of >7 years. Even if the plot shows that almost all the people working for the company for more than 7 years stays with the company, it does not necessary mean that the people working for the company longer tend to stay with the company.
+
+```{r histogram, echo=FALSE}
+
+s1$left.f=factor(s1$left)
+qplot(satisfaction_level, data = s1, color = left.f, fill = left.f,geom = "histogram", main = "histogram: satisfaction level vs left or not")
+
+```
+
+```{r histogram2, echo=FALSE}
+
+s1$left.f=factor(s1$left)
+qplot(time_spend_company, data = s1, color = left.f, fill = left.f,geom = "histogram",main = "histogram: time spend company vs left or not")
+
+```
+
+Other histograms of different variables vs "left" can also be plotted to visially find any possible relationship between different variables and "left". I didn't plot other histograms due to the plot limitation of this assignment.
+
+## 4. Predictive model fit
+
+### 4.1 LASSO
+
+Since "if employee left or not"" is a binomial distribution, logistic regression is a good option to build the model.  Lasso logistic regression is performed at beginning to select the most significant variables.  
+
+```{r LASSO, echo=FALSE}
+
+library(glmnet)
+
+x <- model.matrix(left ~ satisfaction_level + last_evaluation + number_project + average_montly_hours	+ time_spend_company + Work_accident + promotion_last_5years + sales + salary,s1)
+y <- s1$left
+out <- cv.glmnet(x,y,alpha=1,family="binomial",type.measure = "mse")
+plot(out)
+
+# minimize value of lambda
+min_lambda <- out$lambda.min
+
+# regression coeffficients
+coef(out)
+
+```
+
+As shown above, when log(Lambda) is around -7.5, we can get the minimum mean square error and it gives us the following best model fit.
+
+Now, we can tell all variables are statistically significant, and all of them make a contribution to predict if employee is going to leave.
+
+### 4.2 Comparison of single-factor model (only including "satisfaction level"), two-factor model (including "satisfaction" and "time_spent_company"), and full model
+
+Now, we would like to see which variable makes the most significant contribution in our predictive model. Therefore, marginal regressions has been performed, and we would like to see which variable is a key factor.
+
+As shown in the ROC curve plot below, the full model includes all variables has 82.2% AUC, which means that the model is a pretty good representation of the data. The single model, which only includes "satisfaction level", can already get a AUC of 74.8%. The best two-factor model, which includes "satisfaction" and "time_spent_company", only increases the AUC to 77.2%. It means that "satisfaction level" makes the most significant contribution.
+
+```{r single_factor, echo=FALSE}
+
+library(ModelGood)
+
+fit.single <-glm(left ~ satisfaction_level, data=s1, family="binomial")
+# summary(fit.single)
+roc.single<- Roc(fit.single)
+
+fit.twovariable <-glm(left ~ satisfaction_level+time_spend_company, data=s1, family="binomial")
+# summary(fit.twovariable)
+
+fit.fullmodel<-glm(left ~ satisfaction_level + last_evaluation + number_project + average_montly_hours + time_spend_company + Work_accident + promotion_last_5years + sales + salary, family = "binomial", data = s1)
+# summary(fit.fullmodel)
+
+plot(Roc(list("Full" = fit.fullmodel,"Single" = fit.single, "Two" = fit.twovariable)),legend = TRUE, auc = TRUE)
+
+```
